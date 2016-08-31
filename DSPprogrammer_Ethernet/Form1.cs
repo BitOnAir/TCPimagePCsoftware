@@ -214,7 +214,6 @@ namespace DSPprogrammer_Ethernet
 
         string str = "Hello DSP, I'm PC! 0";
         Byte[] cmdBuf = new Byte[10000];
-
         /********************************** UDP receive thread *************************************/
         string receiveStringIP;
         bool isStartUDPrx = false;
