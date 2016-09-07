@@ -61,6 +61,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ctrl_cmd.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="dataFrameType.cs" />
+    <Compile Include="TcpUdp.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>
     </Compile>

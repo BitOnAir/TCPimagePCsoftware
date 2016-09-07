@@ -1,9 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 
@@ -13,17 +9,20 @@ using System.IO;
 using System.Diagnostics;
 
 using System.Threading;
+using System.Runtime.InteropServices;
 
 namespace DSPprogrammer_Ethernet
 {
     public partial class Form1 : Form
     {
-        private Thread TxRxThread;
-        private Thread UDPrxThread;
+        private Thread TcpTxThread;
+        private Thread UdpRxThread;
         TcpClient tcpClientD = new TcpClient(AddressFamily.InterNetwork);
 
         UdpClient udpHost = null;
         IPEndPoint hostEnd = null;
+
+        dataFrameType downLinkFrm;
         public Form1()
         {
             InitializeComponent();
@@ -51,11 +50,14 @@ namespace DSPprogrammer_Ethernet
             udpHost = new UdpClient(hostEnd);
             printInfo("Local UDP:"+hostEnd.ToString(), trx_type.NX);
 
-            UDPrxThread = new Thread(new ThreadStart(udp_rx_fun));
-            UDPrxThread.Start();
+            UdpRxThread = new Thread(new ThreadStart(udp_rx_fun));
+            UdpRxThread.Start();
 
-            TxRxThread = new Thread(new ThreadStart(tcp_txrx_fun));
-            TxRxThread.Start();
+            TcpTxThread = new Thread(new ThreadStart(tcp_tx_fun));
+            TcpTxThread.Start();
+
+            downLinkFrm.frameHead = 0x43;
+            downLinkFrm.frameTail = 0x52;
         }
 
 
@@ -77,8 +79,10 @@ namespace DSPprogrammer_Ethernet
             }
             SetText(str + "\r\n");
         }
-        /******************************* Generate update.ais file **********************************/
-        static bool fileGetFlag = false;
+
+        /**
+         * Generate update.ais file 
+         */
         String aisFileName, testChk;
         Byte[] tpBuf = new Byte[512];
         private void btnFileBrs_Click(object sender, EventArgs e)
@@ -87,7 +91,6 @@ namespace DSPprogrammer_Ethernet
 
             if (openFileDialog1.ShowDialog() == DialogResult.OK)
             {
-                fileGetFlag = true;
                 fileName = openFileDialog1.FileName;
                 cpPath = Environment.CurrentDirectory+"\\Tools\\"+openFileDialog1.SafeFileName;
                 toolPath = Environment.CurrentDirectory + "\\Tools\\genAIS.bat";
@@ -153,110 +156,21 @@ namespace DSPprogrammer_Ethernet
             }
         }
 
-        private void btnUpdate_Click(object sender, EventArgs e)
+        /**
+         * Use the textBoxView/ComboBox in other thread
+         */
+        delegate void SetTextCallBack(string text);
+        private void SetText(string text)
         {
-            int byteSize;
-            Byte[] cmdBuf = new Byte[9];
-            Byte[] preUpdate = System.Text.Encoding.ASCII.GetBytes("update start ");
-            Byte[] postUpdate = System.Text.Encoding.ASCII.GetBytes(" update end");
-            String toolPath = Environment.CurrentDirectory + "\\Tools\\genAIS.bat";
-
-            FileInfo fi1;
-
-            String cameraIP = cmbBoxIP.SelectedItem.ToString();
-            
-            tcpClientD.SendBufferSize  = 8 * 1024;
-            tcpClientD.ReceiveBufferSize = 8 * 1024;
-            tcpClientD.SendTimeout = 1000;
-
-            txtBoxView.AppendText("\r\nConnecting......\r\n");
-            while (!tcpClientD.Connected)
+            if (this.txtBoxView.InvokeRequired)
             {
-                tcpClientD.Connect(System.Net.IPAddress.Parse(cameraIP), 2314);
-            }
-            txtBoxView.AppendText("Connectted!\r\n");
-
-            if (fileGetFlag)
-            {
-                fi1 = new FileInfo(aisFileName);
-
-                cmdBuf[0] = 0x79; cmdBuf[8] = 0x71;
-                cmdBuf[1] = 0;
-                cmdBuf[2] = 0;
-                cmdBuf[3] = 0;
-                cmdBuf[4] = (Byte)((fi1.Length & 0xFF000000) >> 24);
-                cmdBuf[5] = (Byte)((fi1.Length & 0x00FF0000) >> 16);
-                cmdBuf[6] = (Byte)((fi1.Length & 0x0000FF00) >> 8);
-                cmdBuf[7] = (Byte)(fi1.Length & 0x000000FF);
-
-                if (tcpClientD.Client.Send(cmdBuf, 9, SocketFlags.None) == 9)
-                {
-                    byteSize = tcpClientD.Client.Receive(tpBuf);
-                    string str = System.Text.Encoding.Default.GetString(tpBuf, 0, byteSize);
-                    txtBoxView.AppendText("\r\n" + str + "\r\n");
-                }
-
-                tcpClientD.Client.SendFile(aisFileName);
-                fileGetFlag = false;
+                SetTextCallBack stcb = new SetTextCallBack(SetText);
+                this.Invoke(stcb, new object[] { text });
             }
             else
             {
-                if (tcpClientD.Client.Send(cmdBuf, 9, SocketFlags.None) == 9)
-                {
-                    byteSize = tcpClientD.Client.Receive(tpBuf);
-                    string str = System.Text.Encoding.Default.GetString(tpBuf, 0, byteSize);
-                    txtBoxView.AppendText("\r\n" + str + "\r\n");
-                }
+                this.txtBoxView.AppendText(text);
             }
-
-            tcpClientD.Client.Disconnect(true);
-        }
-
-        string str = "Hello DSP, I'm PC! 0";
-        Byte[] cmdBuf = new Byte[10000];
-        /********************************** UDP receive thread *************************************/
-        string receiveStringIP;
-        bool isStartUDPrx = false;
-        bool isGetDspIP = false;
-        //IPAddress[] dspIPlist;
-        public void udp_rx_fun()
-        {
-            while (true)
-            {
-                if (!isStartUDPrx && !tcpClientD.Connected)
-                {
-                    UdpState s = new UdpState();
-                    s.e = hostEnd;
-                    s.u = udpHost;
-                    udpHost.BeginReceive(new AsyncCallback(ReceiveCallback), s);
-                    isStartUDPrx = true;
-                }
-            }
-        }
-
-        public void ReceiveCallback(IAsyncResult ar)
-        {
-            UdpClient u = (UdpClient)((UdpState)(ar.AsyncState)).u;
-            IPEndPoint e = (IPEndPoint)((UdpState)(ar.AsyncState)).e;
-            int i = 0;
-            Byte[] receiveBytes = u.EndReceive(ar, ref e);
-            if ( (receiveBytes[0] == (byte)'I') && (receiveBytes[1] == (byte)'P') )
-            {
-                System.Array.Reverse(receiveBytes);
-                i = System.Array.IndexOf(receiveBytes, (byte)46);
-
-                receiveStringIP = Encoding.ASCII.GetString(receiveBytes, i + 1, receiveBytes.Length - i - 3);
-
-                if(!cmbBoxIP.Items.Contains(receiveStringIP))
-                {
-                    printInfo(receiveStringIP, trx_type.RX);
-                    AddItem(receiveStringIP);
-                }
-
-                isStartUDPrx = false;
-                isGetDspIP = true;
-            }
-            //isStartUDPrx = false;
         }
 
         delegate void AddItemsCallBack(string text);
@@ -273,22 +187,11 @@ namespace DSPprogrammer_Ethernet
             }
         }
 
-        /********************************** TCP tranceiver thread *********************************/
+        /**
+         * Asynchronous receive image pixel data.
+         */
         private Byte[] tcpRxBuffer = new Byte[1280 * 1024];
         private int totalBytes = 0;
-        public void tcp_txrx_fun()
-        {
-            cmdBuf = System.Text.Encoding.Default.GetBytes(str);
-
-            while (true)
-            {
-                if (tcpClientD.Connected)
-                {
-                    //int bytes = tcpClientD.Client.Receive(tcpRxBuffer);
-                }
-                    
-            }
-        }
         public void TCP_Read_Callback(IAsyncResult ar)
         {
             int read =tcpClientD.Client.EndReceive(ar);
@@ -348,21 +251,6 @@ namespace DSPprogrammer_Ethernet
             }
         }
 
-        /*********************************** Use txtBoxView control in other thread *********************************/
-        delegate void SetTextCallBack(string text);
-        private void SetText(string text)
-        {
-            if (this.txtBoxView.InvokeRequired)
-            {
-                SetTextCallBack stcb = new SetTextCallBack(SetText);
-                this.Invoke(stcb, new object[] { text });
-            }
-            else
-            {
-                this.txtBoxView.AppendText(text);
-            }
-        }
-
         /************************** connect button ************************************/
         private void btnConnect_Click(object sender, EventArgs e)
         {
@@ -389,12 +277,45 @@ namespace DSPprogrammer_Ethernet
             tcpClientD.EndConnect(ar);
             if (tcpClientD.Connected)
             {
-                cmdBuf[0] = 0x30; cmdBuf[1] = 0x01;
-                tcpClientD.Client.Send(cmdBuf, 2, SocketFlags.None);
-
                 tcpClientD.Client.BeginReceive(tcpRxBuffer, 0, tcpRxBuffer.Length, 0, new AsyncCallback(TCP_Read_Callback), null);
             }
         }
+        
+        /**
+         * ROI select
+         */
+        Rectangle rectMark = new Rectangle(0,0,0,0);
+        bool rMouseDown = false;
+        bool RoiMark = false;
+        private void pictureBox1_MouseDown(object sender, MouseEventArgs e)
+        {
+            rectMark.X = e.X;
+            rectMark.Y = e.Y;
+            rMouseDown = true;
+        }
+        private void pictureBox1_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (rMouseDown)
+            {
+                pictureBox1.Refresh();
+                Graphics g = pictureBox1.CreateGraphics();
+                Pen pen1 = new Pen(Color.Red);
+
+                rectMark.Width = Math.Abs(e.X - rectMark.X) + 1;
+                rectMark.Height = Math.Abs(e.Y - rectMark.Y) + 1;
+
+                g.DrawRectangle(pen1, rectMark);
+                g.Dispose();
+            }
+        }
+        private void pictureBox1_MouseUp(object sender, MouseEventArgs e)
+        {
+            rMouseDown = false;
+            RoiMark = true;
+            printInfo("ROI:" + rectMark.ToString(), trx_type.NX);
+        }
+
+        
 
         private void btnSend_Click(object sender, EventArgs e)
         {
@@ -418,6 +339,9 @@ namespace DSPprogrammer_Ethernet
                 printInfo("Connection doesn't setup", trx_type.NX);
             }
         }
+
+
+
     }
 
     public class UdpState : Object
