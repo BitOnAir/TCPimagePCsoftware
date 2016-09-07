@@ -24,6 +24,20 @@ namespace DSPprogrammer_Ethernet
                 fillTxBuffer(tcpTxBuffer);
 
                 hasTxData = true;
+
+                int i;
+                string dataSend = "";
+                for (i = 0; i < SendingSize; i++)
+                {
+                    string hexStr =  Convert.ToString(tcpTxBuffer[i], 16);
+                    if (hexStr.Length == 1)
+                    {
+                        hexStr = "0" + hexStr;
+                    }
+
+                    dataSend += " " + hexStr;
+                }
+                printInfo(dataSend, trx_type.TX);
             }
             else
             {

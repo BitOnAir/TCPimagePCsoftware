@@ -64,9 +64,22 @@ namespace DSPprogrammer_Ethernet
             {
                 if (tcpClientD.Connected && hasTxData)
                 {
-                    int len = 0;
+                    int i, len = 0;
                     len = tcpClientD.Client.Send(tcpTxBuffer, SendingSize, SocketFlags.None);
                     hasTxData = false;
+
+                    string dataSend = "";
+                    for(i=0; i<SendingSize; i++)
+                    {
+                        string hexStr = "0x" + Convert.ToString(tcpTxBuffer[i],16);
+                        if (hexStr.Length == 1)
+                        {
+                            hexStr = "0" + hexStr;
+                        }
+
+                        dataSend += " "+ hexStr;
+                    }
+                    printInfo(dataSend, trx_type.TX);
                 }
             }
         }
